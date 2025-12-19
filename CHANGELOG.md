@@ -7,8 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2024-12-15
+
 ### Added
-- Initial independent library structure
+
+- **Multi-scene joint optimization**: New `computeMultiScene()` method for calibrating from multiple observations
+  - Supports weighted SVD optimization across all point correspondences
+  - `SceneData` struct for organizing multi-scene data
+  - Optional per-scene weights for prioritizing certain observations
+  - `sort_points` parameter to control point sorting behavior
+- **Weighted SVD solver**: New `solveRigidTransformWeighted()` static method
+  - Implements weighted Procrustes/Wahba algorithm
+  - Handles reflection cases (det(R) < 0)
+  - Returns weighted RMSE
+- Comprehensive unit tests for multi-scene calibration
+- Standalone test program for multi-scene validation
+- Updated README with multi-scene API documentation
+
+### Changed
+
+- `CalibrationCalculator` now supports both single-scene (`compute()`) and multi-scene (`computeMultiScene()`) calibration
+
+### Reference
+
+This update incorporates multi-scene calibration functionality based on the original FAST-Calib implementation:
+
+- **Upstream project**: [FAST-Calib](https://github.com/hku-mars/FAST-Calib)
+- **Reference commit**: `e51e1aa1ee5f79bd072c25568a617dfeb442ba17`
+- **Reference file**: `src/multi_scene.cpp` (`SolveRigidTransformWeighted` function)
 
 ## [0.1.0] - 2024-XX-XX
 

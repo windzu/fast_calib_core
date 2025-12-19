@@ -10,6 +10,8 @@ A ROS-agnostic, header-only C++ library for camera-LiDAR extrinsic calibration.
 
 - **Header-only library**: No compilation required, just include the headers
 - **ROS-agnostic**: Works with any C++ project
+- **Single-scene calibration**: Fast calibration from a single observation
+- **Multi-scene joint optimization**: Weighted SVD-based calibration from multiple observations for improved accuracy
 - **Multiple LiDAR types**: Supports both mechanical (Velodyne-style) and solid-state LiDARs (Livox)
 - **ArUco-based target**: Uses ArUco markers for robust detection
 - **SVD-based calibration**: Robust singular value decomposition for transformation estimation
@@ -246,6 +248,108 @@ p2: -0.000350205 # or cam_d3
 
 ---
 
+## Configuration File Interface
+
+For users who prefer a simpler interface, the `calibrate` tool accepts a single YAML configuration file that specifies all calibration parameters and scenes.
+
+### Single-Scene Calibration
+
+Create a `config.yaml` file:
+
+```yaml
+# Camera intrinsics
+camera:
+  image_width: 1440
+  image_height: 1080
+  distortion_coefficients:
+    k1: 0.00324949759262203
+    k2: -0.0171040538369167
+    p1: 0.000669657443377146
+    p2: -0.000350205468789575
+  intrinsics:
+    fx: 522.123514287681
+    fy: 522.275153384482
+    cx: 773.466430504725
+    cy: 534.053165700174
+
+# LiDAR configuration
+lidar:
+  type: "solid"  # "solid" for Livox, "mech" for mechanical LiDAR
+
+# Calibration target parameters
+target:
+  marker_size: 0.20
+  delta_width_qr_center: 0.55
+  delta_height_qr_center: 0.35
+  circle_radius: 0.12
+
+# Single scene (relative paths from config file location)
+scenes:
+  - name: "scene_01"
+    image: "11.png"
+    pointcloud: "11.pcd"
+    filter:
+      min: [1.0, -3.0, -2.0]
+      max: [5.0, 3.0, 3.0]
+
+# Output configuration
+output:
+  path: "output"
+```
+
+Run calibration:
+
+```bash
+./build/examples/calibrate data/mid360/config.yaml
+```
+
+### Multi-Scene Joint Calibration
+
+For improved accuracy, configure multiple scenes:
+
+```yaml
+scenes:
+  - name: "scene_11"
+    image: "11.png"
+    pointcloud: "11.pcd"
+    filter:
+      min: [1.0, -3.0, -2.0]
+      max: [5.0, 3.0, 3.0]
+
+  - name: "scene_22"
+    image: "22.png"
+    pointcloud: "22.pcd"
+    filter:
+      min: [1.0, -3.0, -2.0]
+      max: [5.0, 3.0, 3.0]
+
+  - name: "scene_33"
+    image: "33.png"
+    pointcloud: "33.pcd"
+    filter:
+      min: [1.0, -3.0, -2.0]
+      max: [5.0, 3.0, 3.0]
+```
+
+The tool automatically detects multi-scene configuration and performs joint optimization using all scenes.
+
+### Configuration Reference
+
+| Section | Field | Description |
+|---------|-------|-------------|
+| `camera` | `intrinsics` | fx, fy, cx, cy focal length and principal point |
+| `camera` | `distortion_coefficients` | k1, k2, p1, p2 distortion |
+| `lidar` | `type` | "solid" (Livox) or "mech" (Velodyne/Ouster) |
+| `target` | `marker_size` | ArUco marker side length (meters) |
+| `target` | `delta_width_qr_center` | Horizontal distance between QR centers |
+| `target` | `delta_height_qr_center` | Vertical distance between QR centers |
+| `target` | `circle_radius` | Circle hole radius |
+| `scenes[].filter.min` | [x,y,z] | ROI minimum bounds |
+| `scenes[].filter.max` | [x,y,z] | ROI maximum bounds |
+| `output` | `path` | Output directory (relative or absolute) |
+
+---
+
 ## Quick Start (Programmatic API)
 
 ```cpp
@@ -325,9 +429,52 @@ QRDetectionResult result = detector.detect(image, target_params);
 
 #### CalibrationCalculator
 
+**Single-scene calibration:**
+
 ```cpp
 CalibrationCalculator calc(logger);  // Optional custom logger
 CalibrationResult result = calc.compute(lidar_centers, camera_centers);
+```
+
+**Multi-scene joint optimization:**
+
+```cpp
+#include <fast_calib_core.hpp>
+
+using namespace fast_calib;
+
+// Collect scene data from multiple observations
+std::vector<SceneData> scenes;
+scenes.emplace_back(lidar_centers_1, camera_centers_1);
+scenes.emplace_back(lidar_centers_2, camera_centers_2);
+scenes.emplace_back(lidar_centers_3, camera_centers_3);
+
+// Perform joint optimization
+CalibrationCalculator calc;
+CalibrationResult result = calc.computeMultiScene(scenes);
+
+// With custom weights (optional)
+std::vector<double> weights = {2.0, 1.0, 1.0};  // Higher weight for scene 1
+result = calc.computeMultiScene(scenes, &weights);
+
+// With pre-sorted point correspondences (skip internal sorting)
+result = calc.computeMultiScene(scenes, nullptr, false);
+
+if (result.success) {
+    std::cout << "Multi-scene RMSE: " << result.rmse << " m" << std::endl;
+    // Use result.transformation (4x4 matrix)
+}
+```
+
+**SceneData structure:**
+
+```cpp
+struct SceneData {
+  PointCloudXYZPtr lidar_centers;  // Circle centers in LiDAR frame (4 points)
+  PointCloudXYZPtr qr_centers;     // Circle centers in camera frame (4 points)
+  
+  bool isValid() const;  // Returns true if both have exactly 4 points
+};
 ```
 
 ### Utilities

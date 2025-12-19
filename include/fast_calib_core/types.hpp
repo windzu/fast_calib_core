@@ -295,4 +295,24 @@ using PointCloudXYZRGBPtr = pcl::PointCloud<pcl::PointXYZRGB>::Ptr;
 
 }  // namespace fast_calib
 
+// ============================================================================
+// PCL Template Explicit Instantiations
+// Required for custom point type with PCL algorithms
+// These must come AFTER the POINT_CLOUD_REGISTER_POINT_STRUCT
+// ============================================================================
+
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/segmentation/sac_segmentation.h>
+
+// Include PCL implementation files for template instantiation
+#include <pcl/impl/pcl_base.hpp>
+#include <pcl/filters/impl/passthrough.hpp>
+#include <pcl/filters/impl/voxel_grid.hpp>
+#include <pcl/filters/impl/filter.hpp>
+#include <pcl/filters/impl/filter_indices.hpp>
+#include <pcl/filters/impl/extract_indices.hpp>
+#include <pcl/segmentation/impl/sac_segmentation.hpp>
+
 #endif  // FAST_CALIB_CORE_TYPES_HPP

@@ -15,15 +15,18 @@
 #ifndef FAST_CALIB_CORE_CALIBRATION_HPP
 #define FAST_CALIB_CORE_CALIBRATION_HPP
 
+#include <pcl/common/centroid.h>
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/registration/transformation_estimation_svd.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 
 #include "types.hpp"
 
@@ -34,8 +37,18 @@ namespace fast_calib {
 // ============================================================================
 
 /**
- * @brief Sort pattern centers to ensure consistent ordering
- * @param input Input point cloud
+ * @brief Sort pattern centers to ensure consistent ordering across scenes
+ *
+ * This implementation follows the original FAST-Calib approach:
+ * 1. For LiDAR points, first transform to camera-like coordinate system
+ * 2. Use atan2 angle-based sorting around centroid
+ * 3. Ensure consistent counter-clockwise ordering
+ * 4. For LiDAR, transform back to original coordinate system
+ *
+ * The key insight is that both camera and LiDAR points are sorted in a
+ * unified coordinate system to ensure consistent point correspondence.
+ *
+ * @param input Input point cloud (4 points)
  * @param output Sorted output point cloud
  * @param sensor_type "camera" or "lidar"
  */
@@ -43,34 +56,87 @@ inline void sortPatternCenters(const PointCloudXYZPtr& input,
                                PointCloudXYZPtr& output,
                                const std::string& sensor_type) {
   output->clear();
+  output->resize(4);
 
   if (input->size() != TARGET_NUM_CIRCLES) {
+    std::cerr << "[sortPatternCenters] Number of " << sensor_type
+              << " center points to be sorted is not 4." << std::endl;
     *output = *input;
     return;
   }
 
-  // Copy points for sorting
-  std::vector<pcl::PointXYZ> points(input->begin(), input->end());
+  // Create working point cloud - transform LiDAR to camera-like coordinates
+  PointCloudXYZPtr work_pc(new PointCloudXYZ);
 
-  // Sort strategy based on sensor type
-  if (sensor_type == "camera") {
-    // For camera: sort by Y (top to bottom), then by X (left to right)
-    std::sort(points.begin(), points.end(),
-              [](const pcl::PointXYZ& a, const pcl::PointXYZ& b) {
-                if (std::abs(a.y - b.y) > 0.05) return a.y < b.y;
-                return a.x < b.x;
-              });
+  if (sensor_type == "lidar") {
+    // LiDAR to Camera-like coordinate transformation:
+    // LiDAR: X-forward, Y-left, Z-up
+    // Camera: X-right, Y-down, Z-forward
+    // Transform: cam_x = -lidar_y, cam_y = -lidar_z, cam_z = lidar_x
+    for (const auto& p : *input) {
+      pcl::PointXYZ pt;
+      pt.x = -p.y;  // LiDAR Y -> Camera -X
+      pt.y = -p.z;  // LiDAR Z -> Camera -Y
+      pt.z = p.x;   // LiDAR X -> Camera Z
+      work_pc->push_back(pt);
+    }
   } else {
-    // For LiDAR: sort by Z (top to bottom), then by Y (left to right)
-    std::sort(points.begin(), points.end(),
-              [](const pcl::PointXYZ& a, const pcl::PointXYZ& b) {
-                if (std::abs(a.z - b.z) > 0.05) return a.z > b.z;
-                return a.y < b.y;
-              });
+    *work_pc = *input;
   }
 
-  for (const auto& pt : points) {
-    output->push_back(pt);
+  // Calculate centroid
+  Eigen::Vector4f centroid;
+  pcl::compute3DCentroid(*work_pc, centroid);
+  pcl::PointXYZ ref_origin(centroid[0], centroid[1], centroid[2]);
+
+  // Calculate angles using atan2 for each point relative to centroid
+  // Project to XY plane (camera image plane)
+  std::vector<std::pair<float, int>> angle_idx_pairs;
+  for (size_t i = 0; i < work_pc->size(); ++i) {
+    const auto& p = work_pc->points[i];
+    float rel_x = p.x - ref_origin.x;
+    float rel_y = p.y - ref_origin.y;
+    float angle = std::atan2(rel_y, rel_x);
+    angle_idx_pairs.emplace_back(angle, static_cast<int>(i));
+  }
+
+  // Sort by angle (this gives counter-clockwise or clockwise ordering)
+  std::sort(angle_idx_pairs.begin(), angle_idx_pairs.end());
+
+  // Copy sorted points to temporary vector
+  std::vector<pcl::PointXYZ> sorted_work(4);
+  for (int i = 0; i < 4; ++i) {
+    sorted_work[i] = work_pc->points[angle_idx_pairs[i].second];
+  }
+
+  // Verify counter-clockwise ordering and fix if necessary
+  // Check cross product of consecutive edge vectors
+  const auto& p0 = sorted_work[0];
+  const auto& p1 = sorted_work[1];
+  const auto& p2 = sorted_work[2];
+
+  Eigen::Vector3f v01(p1.x - p0.x, p1.y - p0.y, 0);
+  Eigen::Vector3f v12(p2.x - p1.x, p2.y - p1.y, 0);
+
+  // If cross product Z > 0, it's counter-clockwise, swap to make clockwise
+  // (or vice versa - the key is consistency)
+  if (v01.cross(v12).z() > 0) {
+    std::swap(sorted_work[1], sorted_work[3]);
+  }
+
+  // Transform back to original LiDAR coordinates if needed
+  if (sensor_type == "lidar") {
+    for (int i = 0; i < 4; ++i) {
+      const auto& pt = sorted_work[i];
+      // Inverse transform: lidar_x = cam_z, lidar_y = -cam_x, lidar_z = -cam_y
+      output->points[i].x = pt.z;   // Camera Z -> LiDAR X
+      output->points[i].y = -pt.x;  // Camera -X -> LiDAR Y
+      output->points[i].z = -pt.y;  // Camera -Y -> LiDAR Z
+    }
+  } else {
+    for (int i = 0; i < 4; ++i) {
+      output->points[i] = sorted_work[i];
+    }
   }
 }
 
@@ -79,7 +145,38 @@ inline void sortPatternCenters(const PointCloudXYZPtr& input,
 // ============================================================================
 
 /**
+ * @brief Scene data for multi-scene calibration
+ *
+ * Contains the detected circle centers from both LiDAR and camera for one
+ * scene. Each scene should have exactly 4 points (TARGET_NUM_CIRCLES).
+ */
+struct SceneData {
+  PointCloudXYZPtr lidar_centers;  ///< Circle centers detected in LiDAR frame
+  PointCloudXYZPtr qr_centers;     ///< Circle centers detected in camera frame
+
+  SceneData()
+      : lidar_centers(new PointCloudXYZ), qr_centers(new PointCloudXYZ) {}
+
+  SceneData(const PointCloudXYZPtr& lidar, const PointCloudXYZPtr& qr)
+      : lidar_centers(lidar), qr_centers(qr) {}
+
+  /**
+   * @brief Check if scene data is valid
+   * @return true if both point clouds have exactly TARGET_NUM_CIRCLES points
+   */
+  bool isValid() const {
+    return lidar_centers && qr_centers &&
+           lidar_centers->size() == TARGET_NUM_CIRCLES &&
+           qr_centers->size() == TARGET_NUM_CIRCLES;
+  }
+};
+
+/**
  * @brief Computes extrinsic calibration from LiDAR to camera
+ *
+ * Supports both single-scene and multi-scene calibration.
+ * For multi-scene calibration, point correspondences from all scenes are
+ * merged and jointly optimized using weighted SVD.
  */
 class CalibrationCalculator {
  public:
@@ -91,7 +188,7 @@ class CalibrationCalculator {
       : logger_(logger) {}
 
   /**
-   * @brief Compute extrinsic transformation from LiDAR to camera
+   * @brief Compute extrinsic transformation from LiDAR to camera (single scene)
    * @param lidar_centers Circle centers detected in LiDAR frame
    * @param qr_centers Circle centers detected in camera frame
    * @return Calibration result with transformation matrix and RMSE
@@ -131,6 +228,194 @@ class CalibrationCalculator {
     } else {
       result.error_message = "RMSE computation failed";
     }
+
+    return result;
+  }
+
+  /**
+   * @brief Compute extrinsic transformation from multiple scenes (joint
+   * optimization)
+   *
+   * This method merges point correspondences from all scenes and performs
+   * a joint weighted SVD optimization to find the best rigid transformation.
+   *
+   * @param scenes Vector of scene data, each containing lidar and camera
+   * centers
+   * @param weights Optional weights for each scene (nullptr for uniform
+   * weights)
+   * @param sort_points If true, sort points for consistent pairing (default).
+   *                    Set to false if points are already correctly paired.
+   * @return Calibration result with transformation matrix and RMSE
+   */
+  CalibrationResult computeMultiScene(
+      const std::vector<SceneData>& scenes,
+      const std::vector<double>* weights = nullptr, bool sort_points = true) {
+    CalibrationResult result;
+
+    // Validate input
+    if (scenes.empty()) {
+      result.error_message = "No scenes provided";
+      return result;
+    }
+
+    if (scenes.size() < 2) {
+      result.error_message =
+          "Multi-scene calibration requires at least 2 scenes";
+      return result;
+    }
+
+    // Validate weights if provided
+    if (weights && weights->size() != scenes.size()) {
+      result.error_message = "Weights size doesn't match number of scenes";
+      return result;
+    }
+
+    // Collect all point correspondences
+    std::vector<Eigen::Vector3d> all_lidar_pts;
+    std::vector<Eigen::Vector3d> all_camera_pts;
+    std::vector<double> all_weights;
+
+    for (size_t scene_idx = 0; scene_idx < scenes.size(); ++scene_idx) {
+      const auto& scene = scenes[scene_idx];
+
+      if (!scene.isValid()) {
+        result.error_message = "Scene " + std::to_string(scene_idx) +
+                               " has invalid data (expected " +
+                               std::to_string(TARGET_NUM_CIRCLES) + " points)";
+        return result;
+      }
+
+      PointCloudXYZPtr lidar_pts = scene.lidar_centers;
+      PointCloudXYZPtr camera_pts = scene.qr_centers;
+
+      // Optionally sort centers for consistent pairing
+      if (sort_points) {
+        PointCloudXYZPtr sorted_lidar(new PointCloudXYZ);
+        PointCloudXYZPtr sorted_qr(new PointCloudXYZ);
+        sortPatternCenters(scene.lidar_centers, sorted_lidar, "lidar");
+        sortPatternCenters(scene.qr_centers, sorted_qr, "camera");
+        lidar_pts = sorted_lidar;
+        camera_pts = sorted_qr;
+      }
+
+      // Get scene weight
+      double scene_weight = weights ? (*weights)[scene_idx] : 1.0;
+
+      // Add points from this scene
+      for (size_t i = 0; i < lidar_pts->size(); ++i) {
+        const auto& lidar_pt = lidar_pts->points[i];
+        const auto& camera_pt = camera_pts->points[i];
+
+        all_lidar_pts.emplace_back(lidar_pt.x, lidar_pt.y, lidar_pt.z);
+        all_camera_pts.emplace_back(camera_pt.x, camera_pt.y, camera_pt.z);
+        all_weights.push_back(scene_weight);
+      }
+    }
+
+    log(LogLevel::Info, "Multi-scene calibration with " +
+                            std::to_string(scenes.size()) + " scenes, " +
+                            std::to_string(all_lidar_pts.size()) +
+                            " point correspondences");
+
+    // Compute weighted rigid transformation using SVD
+    result =
+        solveRigidTransformWeighted(all_lidar_pts, all_camera_pts, all_weights);
+
+    if (result.success) {
+      log(LogLevel::Info, "Multi-scene calibration RMSE: " +
+                              std::to_string(result.rmse) + " m");
+    }
+
+    return result;
+  }
+
+  /**
+   * @brief Solve rigid transformation using weighted SVD
+   *
+   * Computes the optimal rigid transformation (R, t) that minimizes:
+   *   sum_i w_i * ||R * lidar_i + t - camera_i||^2
+   *
+   * Uses the weighted Procrustes/Wahba algorithm with SVD decomposition.
+   *
+   * @param lidar_pts Source points in LiDAR frame
+   * @param camera_pts Target points in camera frame
+   * @param weights Weights for each point correspondence
+   * @return Calibration result with transformation matrix and weighted RMSE
+   */
+  static CalibrationResult solveRigidTransformWeighted(
+      const std::vector<Eigen::Vector3d>& lidar_pts,
+      const std::vector<Eigen::Vector3d>& camera_pts,
+      const std::vector<double>& weights) {
+    CalibrationResult result;
+
+    const size_t N = lidar_pts.size();
+    if (N < 3 || camera_pts.size() != N || weights.size() != N) {
+      result.error_message =
+          "Invalid input: need at least 3 points with matching sizes";
+      return result;
+    }
+
+    // Compute total weight
+    double weight_sum = 0.0;
+    for (const auto& w : weights) {
+      weight_sum += w;
+    }
+    if (weight_sum <= 0) {
+      result.error_message = "Total weight must be positive";
+      return result;
+    }
+
+    // Compute weighted centroids
+    Eigen::Vector3d centroid_lidar = Eigen::Vector3d::Zero();
+    Eigen::Vector3d centroid_camera = Eigen::Vector3d::Zero();
+    for (size_t i = 0; i < N; ++i) {
+      centroid_lidar += weights[i] * lidar_pts[i];
+      centroid_camera += weights[i] * camera_pts[i];
+    }
+    centroid_lidar /= weight_sum;
+    centroid_camera /= weight_sum;
+
+    // Build weighted cross-covariance matrix
+    Eigen::Matrix3d H = Eigen::Matrix3d::Zero();
+    for (size_t i = 0; i < N; ++i) {
+      Eigen::Vector3d p = lidar_pts[i] - centroid_lidar;
+      Eigen::Vector3d q = camera_pts[i] - centroid_camera;
+      H += weights[i] * (p * q.transpose());
+    }
+
+    // SVD decomposition: H = U * S * V^T
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+        H, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::Matrix3d U = svd.matrixU();
+    Eigen::Matrix3d V = svd.matrixV();
+
+    // Rotation: R = V * U^T
+    Eigen::Matrix3d R = V * U.transpose();
+
+    // Handle reflection case (det(R) = -1)
+    if (R.determinant() < 0) {
+      Eigen::Matrix3d D = Eigen::Matrix3d::Identity();
+      D(2, 2) = -1;
+      R = V * D * U.transpose();
+    }
+
+    // Translation: t = centroid_camera - R * centroid_lidar
+    Eigen::Vector3d t = centroid_camera - R * centroid_lidar;
+
+    // Build 4x4 transformation matrix
+    result.transformation = Eigen::Matrix4f::Identity();
+    result.transformation.block<3, 3>(0, 0) = R.cast<float>();
+    result.transformation.block<3, 1>(0, 3) = t.cast<float>();
+
+    // Compute weighted RMSE
+    double weighted_rss = 0.0;
+    for (size_t i = 0; i < N; ++i) {
+      Eigen::Vector3d transformed = R * lidar_pts[i] + t;
+      Eigen::Vector3d residual = transformed - camera_pts[i];
+      weighted_rss += weights[i] * residual.squaredNorm();
+    }
+    result.rmse = std::sqrt(weighted_rss / weight_sum);
+    result.success = true;
 
     return result;
   }

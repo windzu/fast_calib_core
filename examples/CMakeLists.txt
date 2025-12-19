@@ -19,3 +19,13 @@ target_link_libraries(calibrate_from_files
     PRIVATE
         fast_calib_core::fast_calib_core
 )
+
+# Config file based calibration (single and multi-scene)
+add_executable(calibrate
+    calibrate.cpp
+)
+
+target_link_libraries(calibrate
+    PRIVATE
+        fast_calib_core::fast_calib_core
+)

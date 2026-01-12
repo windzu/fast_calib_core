@@ -118,6 +118,7 @@ void saveResult(const std::string& output_path, const CalibConfig& config,
        << " (" << config.scenes.size() << " scene(s))\n\n";
 
   file << "cam_model: Pinhole\n";
+  file << "distortion_model: " << config.camera.getDistortionModelName() << "\n";
   file << "cam_fx: " << config.camera.fx << "\n";
   file << "cam_fy: " << config.camera.fy << "\n";
   file << "cam_cx: " << config.camera.cx << "\n";
@@ -126,6 +127,12 @@ void saveResult(const std::string& output_path, const CalibConfig& config,
   file << "cam_d1: " << config.camera.k2 << "\n";
   file << "cam_d2: " << config.camera.p1 << "\n";
   file << "cam_d3: " << config.camera.p2 << "\n";
+  file << "cam_d4: " << config.camera.k3 << "\n";
+  if (config.camera.distortion_model == DistortionModel::Rational) {
+    file << "cam_d5: " << config.camera.k4 << "\n";
+    file << "cam_d6: " << config.camera.k5 << "\n";
+    file << "cam_d7: " << config.camera.k6 << "\n";
+  }
 
   const auto& T = result.transformation;
   file << "\nRcl: [" << std::fixed << std::setprecision(9);
@@ -202,10 +209,13 @@ void saveResult(const std::string& output_path, const CalibConfig& config,
 
 /**
  * @brief Process a single scene and return detected centers
+ * @param raw_cloud Output raw point cloud (before filtering) for full scene colorization
+ * @param filtered_cloud Output filtered point cloud (after ROI filtering)
  */
 bool processScene(const SceneConfig& scene, const CalibConfig& config,
                   PointCloudXYZPtr& lidar_centers, PointCloudXYZPtr& qr_centers,
-                  cv::Mat& annotated_image, PointCloudRingPtr& filtered_cloud) {
+                  cv::Mat& annotated_image, PointCloudRingPtr& filtered_cloud,
+                  PointCloudRingPtr& raw_cloud) {
   std::cout << "\n--- Processing scene: " << scene.name << " ---" << std::endl;
 
   // Resolve paths
@@ -221,7 +231,7 @@ bool processScene(const SceneConfig& scene, const CalibConfig& config,
   std::cout << "Loaded image: " << image.cols << "x" << image.rows << std::endl;
 
   // Load point cloud
-  PointCloudRingPtr raw_cloud(new PointCloudRing);
+  raw_cloud->clear();
   if (!loadPointCloud(pcd_path, config.lidar_type, raw_cloud)) {
     return false;
   }
@@ -309,9 +319,10 @@ CalibrationResult runSingleSceneCalibration(const CalibConfig& config) {
   PointCloudXYZPtr lidar_centers, qr_centers;
   cv::Mat annotated_image;
   PointCloudRingPtr filtered_cloud(new PointCloudRing);
+  PointCloudRingPtr raw_cloud(new PointCloudRing);
 
   if (!processScene(scene, config, lidar_centers, qr_centers, annotated_image,
-                    filtered_cloud)) {
+                    filtered_cloud, raw_cloud)) {
     CalibrationResult result;
     result.error_message = "Scene processing failed";
     return result;
@@ -335,19 +346,15 @@ CalibrationResult runSingleSceneCalibration(const CalibConfig& config) {
       cv::imwrite(output_path + "/annotated_image.png", annotated_image);
     }
 
-    // Create colored point cloud
+    // Create colored point clouds
     if (config.debug.save_colored_cloud) {
-      std::cout << "Creating colored point cloud..." << std::endl;
-      PointCloudXYZRGBPtr colored_cloud(new PointCloudXYZRGB);
-
       cv::Mat image = cv::imread(config.resolvePath(scene.image_path));
-      cv::Mat camera_matrix =
-          (cv::Mat_<double>(3, 3) << config.camera.fx, 0, config.camera.cx, 0,
-           config.camera.fy, config.camera.cy, 0, 0, 1);
-      cv::Mat dist_coeffs =
-          (cv::Mat_<double>(5, 1) << config.camera.k1, config.camera.k2,
-           config.camera.p1, config.camera.p2, 0);
+      cv::Mat camera_matrix = config.camera.getCameraMatrix();
+      cv::Mat dist_coeffs = config.camera.getDistCoeffs();
 
+      // Create ROI colored point cloud (filtered region)
+      std::cout << "Creating ROI colored point cloud..." << std::endl;
+      PointCloudXYZRGBPtr colored_cloud(new PointCloudXYZRGB);
       projectPointCloudToImage(filtered_cloud, result.transformation,
                                camera_matrix, dist_coeffs, image,
                                colored_cloud);
@@ -355,8 +362,22 @@ CalibrationResult runSingleSceneCalibration(const CalibConfig& config) {
       if (!colored_cloud->empty()) {
         pcl::io::savePCDFileBinary(output_path + "/colored_cloud.pcd",
                                    *colored_cloud);
-        std::cout << "Colored " << colored_cloud->size() << " points"
+        std::cout << "  ROI colored: " << colored_cloud->size() << " points"
                   << std::endl;
+      }
+
+      // Create full scene colored point cloud (entire point cloud)
+      std::cout << "Creating full scene colored point cloud..." << std::endl;
+      PointCloudXYZRGBPtr full_colored_cloud(new PointCloudXYZRGB);
+      projectPointCloudToImage(raw_cloud, result.transformation,
+                               camera_matrix, dist_coeffs, image,
+                               full_colored_cloud);
+
+      if (!full_colored_cloud->empty()) {
+        pcl::io::savePCDFileBinary(output_path + "/full_colored_cloud.pcd",
+                                   *full_colored_cloud);
+        std::cout << "  Full scene colored: " << full_colored_cloud->size()
+                  << " points" << std::endl;
       }
     }
   }
@@ -371,15 +392,17 @@ CalibrationResult runMultiSceneCalibration(const CalibConfig& config) {
   std::vector<SceneData> scenes_data;
   std::vector<cv::Mat> annotated_images;
   std::vector<PointCloudRingPtr> filtered_clouds;
+  std::vector<PointCloudRingPtr> raw_clouds;
 
   // Process all scenes
   for (const auto& scene : config.scenes) {
     PointCloudXYZPtr lidar_centers, qr_centers;
     cv::Mat annotated_image;
     PointCloudRingPtr filtered_cloud(new PointCloudRing);
+    PointCloudRingPtr raw_cloud(new PointCloudRing);
 
     if (!processScene(scene, config, lidar_centers, qr_centers, annotated_image,
-                      filtered_cloud)) {
+                      filtered_cloud, raw_cloud)) {
       std::cerr << "Failed to process scene: " << scene.name << std::endl;
       CalibrationResult result;
       result.error_message = "Scene processing failed: " + scene.name;
@@ -389,6 +412,7 @@ CalibrationResult runMultiSceneCalibration(const CalibConfig& config) {
     scenes_data.emplace_back(lidar_centers, qr_centers);
     annotated_images.push_back(annotated_image);
     filtered_clouds.push_back(filtered_cloud);
+    raw_clouds.push_back(raw_cloud);
   }
 
   // Perform multi-scene joint optimization
@@ -421,18 +445,15 @@ CalibrationResult runMultiSceneCalibration(const CalibConfig& config) {
     if (config.debug.save_colored_cloud) {
       std::cout << "Creating colored point clouds..." << std::endl;
 
-      cv::Mat camera_matrix =
-          (cv::Mat_<double>(3, 3) << config.camera.fx, 0, config.camera.cx, 0,
-           config.camera.fy, config.camera.cy, 0, 0, 1);
-      cv::Mat dist_coeffs =
-          (cv::Mat_<double>(5, 1) << config.camera.k1, config.camera.k2,
-           config.camera.p1, config.camera.p2, 0);
+      cv::Mat camera_matrix = config.camera.getCameraMatrix();
+      cv::Mat dist_coeffs = config.camera.getDistCoeffs();
 
       for (size_t i = 0; i < config.scenes.size(); ++i) {
         cv::Mat image =
             cv::imread(config.resolvePath(config.scenes[i].image_path));
         if (image.empty()) continue;
 
+        // Create ROI colored point cloud (filtered region)
         PointCloudXYZRGBPtr colored_cloud(new PointCloudXYZRGB);
         projectPointCloudToImage(filtered_clouds[i], result.transformation,
                                  camera_matrix, dist_coeffs, image,
@@ -442,8 +463,22 @@ CalibrationResult runMultiSceneCalibration(const CalibConfig& config) {
           std::string pcd_file =
               output_path + "/colored_" + config.scenes[i].name + ".pcd";
           pcl::io::savePCDFileBinary(pcd_file, *colored_cloud);
-          std::cout << "  " << config.scenes[i].name << ": "
+          std::cout << "  " << config.scenes[i].name << " (ROI): "
                     << colored_cloud->size() << " points" << std::endl;
+        }
+
+        // Create full scene colored point cloud (entire point cloud)
+        PointCloudXYZRGBPtr full_colored_cloud(new PointCloudXYZRGB);
+        projectPointCloudToImage(raw_clouds[i], result.transformation,
+                                 camera_matrix, dist_coeffs, image,
+                                 full_colored_cloud);
+
+        if (!full_colored_cloud->empty()) {
+          std::string pcd_file =
+              output_path + "/full_colored_" + config.scenes[i].name + ".pcd";
+          pcl::io::savePCDFileBinary(pcd_file, *full_colored_cloud);
+          std::cout << "  " << config.scenes[i].name << " (full): "
+                    << full_colored_cloud->size() << " points" << std::endl;
         }
       }
     }

@@ -1,5 +1,7 @@
 # fast_calib_core
 
+[English](README.md) | [中文](README_CN.md)
+
 A ROS-agnostic, header-only C++ library for camera-LiDAR extrinsic calibration.
 
 ## Overview
@@ -348,6 +350,125 @@ The tool automatically detects multi-scene configuration and performs joint opti
 | `scenes[].filter.max` | [x,y,z] | ROI maximum bounds |
 | `output` | `path` | Output directory (relative or absolute) |
 
+### Testing with Sample Data
+
+The repository includes sample data for testing. Here's how to run a complete calibration test:
+
+```bash
+# 1. Build the project
+cd /path/to/fast_calib_core
+mkdir -p build && cd build
+cmake .. -DFAST_CALIB_CORE_BUILD_EXAMPLES=ON
+make -j$(nproc)
+
+# 2. Run multi-scene calibration with the sample config
+./examples/calibrate ../data/mid360_multi_scene/multi_scene_config.yaml
+```
+
+**Expected Terminal Output:**
+
+```
+FAST-Calib Core Library v0.1.0
+==========================================
+
+=== Calibration Configuration ===
+Camera:
+  fx=1187.16, fy=1187.29
+  cx=958.499, cy=768.769
+  distortion_model: rational
+  k1=0.211536, k2=-0.308318, k3=-0.0244587
+  p1=-7.27019e-05, p2=-8.8394e-06
+  k4=0.637844, k5=-0.33033, k6=-0.12048
+LiDAR type: solid-state
+Scenes: 2
+  [0] scene_1
+  [1] scene_2
+================================
+
+--- Processing scene: scene_1 ---
+...
+--- Processing scene: scene_2 ---
+...
+
+=== Multi-Scene Joint Optimization ===
+Total scenes: 2
+Total point correspondences: 8
+
+Multi-scene calibration successful!
+RMSE: 0.00XXXX m
+
+Creating colored point clouds...
+  scene_1 (ROI): XXXXX points
+  scene_1 (full): XXXXX points
+  scene_2 (ROI): XXXXX points
+  scene_2 (full): XXXXX points
+
+Done!
+```
+
+**Output Files Generated:**
+
+After running the calibration, check the output directory for results:
+
+```bash
+ls data/mid360_multi_scene/output/
+```
+
+| File | Description |
+|------|-------------|
+| `multi_calib_result.txt` | Calibration result with camera parameters and extrinsics |
+| `transformation.txt` | 4x4 transformation matrix (T_camera_lidar) |
+| `camera.extrinsics.yaml` | Extrinsics in ROS-compatible format |
+| `annotated_scene_1.png` | ArUco detection visualization for scene 1 |
+| `annotated_scene_2.png` | ArUco detection visualization for scene 2 |
+| `colored_scene_1.pcd` | ROI point cloud colored by camera (scene 1) |
+| `colored_scene_2.pcd` | ROI point cloud colored by camera (scene 2) |
+| `full_colored_scene_1.pcd` | Full point cloud colored by camera (scene 1) |
+| `full_colored_scene_2.pcd` | Full point cloud colored by camera (scene 2) |
+
+**Visualizing Results:**
+
+```bash
+# View colored point cloud with pcl_viewer
+pcl_viewer data/mid360_multi_scene/output/full_colored_scene_1.pcd
+
+# Or use CloudCompare for better visualization
+cloudcompare.CloudCompare data/mid360_multi_scene/output/full_colored_scene_1.pcd
+```
+
+### Distortion Model Configuration
+
+The library supports two distortion models:
+
+**plumb_bob (RadTan)** - 5 coefficients:
+
+```yaml
+camera:
+  distortion_model: plumb_bob
+  distortion_coefficients:
+    k1: -0.414747
+    k2: 0.220516
+    p1: -7.31650e-05
+    p2: -8.94179e-06
+    k3: -0.065621
+```
+
+**rational** - 8 coefficients:
+
+```yaml
+camera:
+  distortion_model: rational
+  distortion_coefficients:
+    k1: 0.211536
+    k2: -0.308318
+    p1: -7.27019e-05
+    p2: -8.8394e-06
+    k3: -0.024458
+    k4: 0.637844
+    k5: -0.330330
+    k6: -0.120480
+```
+
 ---
 
 ## Quick Start (Programmatic API)
@@ -492,6 +613,53 @@ projectPointCloudToImage(cloud, transformation, K, D, image, colored);
 ResultSaver saver("/output/path");
 saver.saveCalibrationResults(params, result, colored_cloud, annotated_image);
 ```
+
+## Scripts
+
+The `scripts/` directory contains utility scripts for data preparation.
+
+### bag_to_pcd.py
+
+Extracts point clouds from ROS2 bag files (.mcap or .db3) and saves them as PCD files for calibration.
+
+**Dependencies:**
+
+- `rclpy`, `rosbag2_py` (ROS2 packages)
+- `numpy`
+
+**Usage:**
+
+```bash
+# Basic usage (default topic: /livox/lidar)
+python3 scripts/bag_to_pcd.py /path/to/bag_directory
+
+# Specify custom topic
+python3 scripts/bag_to_pcd.py /path/to/bags --topic /velodyne_points
+
+# Specify output directory
+python3 scripts/bag_to_pcd.py /path/to/bags --output /path/to/output
+
+# Force binary PCD format (recommended for large point clouds)
+python3 scripts/bag_to_pcd.py /path/to/bags --binary
+
+# Force ASCII PCD format
+python3 scripts/bag_to_pcd.py /path/to/bags --ascii
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `bag_dir` | Directory containing ROS2 bag files |
+| `--topic, -t` | Point cloud topic name (default: `/livox/lidar`) |
+| `--output, -o` | Output directory for PCD files (default: same as input) |
+| `--binary, -b` | Force binary PCD format |
+| `--ascii, -a` | Force ASCII PCD format |
+
+**Output:**
+
+- Creates one PCD file per bag file, named `<bag_name>.pcd`
+- Automatically uses binary format for point clouds > 1M points (unless overridden)
 
 ## Custom Logging
 

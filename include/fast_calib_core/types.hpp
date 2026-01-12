@@ -80,6 +80,14 @@ enum class LiDARType : int {
 };
 
 /**
+ * @brief Camera distortion model type
+ */
+enum class DistortionModel : int {
+  PlumbBob = 0,  ///< plumb_bob (RadTan): k1, k2, p1, p2, k3 (5 coefficients)
+  Rational = 1   ///< rational: k1, k2, p1, p2, k3, k4, k5, k6 (8 coefficients)
+};
+
+/**
  * @brief Log level for internal logging
  */
 enum class LogLevel { Debug, Info, Warning, Error };
@@ -130,18 +138,32 @@ inline void silentLogger(LogLevel /*level*/, const std::string& /*message*/) {
 // ============================================================================
 
 /**
- * @brief Camera intrinsic parameters (pinhole model with radial-tangential
- * distortion)
+ * @brief Camera intrinsic parameters with support for multiple distortion models
+ * 
+ * Supports:
+ * - plumb_bob (RadTan): k1, k2, p1, p2, k3 (5 coefficients)
+ * - rational: k1, k2, p1, p2, k3, k4, k5, k6 (8 coefficients)
  */
 struct CameraIntrinsics {
   double fx = 1215.31801774424;      ///< Focal length x
   double fy = 1214.72961288138;      ///< Focal length y
   double cx = 1047.86571859677;      ///< Principal point x
   double cy = 745.068353101898;      ///< Principal point y
+  
+  // Distortion model
+  DistortionModel distortion_model = DistortionModel::PlumbBob;
+  
+  // Distortion coefficients (common to both models)
   double k1 = -0.33574781188503;     ///< Radial distortion k1
   double k2 = 0.10996870793601;      ///< Radial distortion k2
   double p1 = 0.000157303079833973;  ///< Tangential distortion p1
   double p2 = 0.000544930726278493;  ///< Tangential distortion p2
+  double k3 = 0.0;                   ///< Radial distortion k3
+  
+  // Additional coefficients for rational model
+  double k4 = 0.0;                   ///< Radial distortion k4 (rational model)
+  double k5 = 0.0;                   ///< Radial distortion k5 (rational model)
+  double k6 = 0.0;                   ///< Radial distortion k6 (rational model)
 
   /**
    * @brief Get OpenCV camera matrix (3x3)
@@ -151,10 +173,24 @@ struct CameraIntrinsics {
   }
 
   /**
-   * @brief Get OpenCV distortion coefficients (1x5)
+   * @brief Get OpenCV distortion coefficients
+   * @return 5-element vector for plumb_bob, 8-element for rational
    */
   cv::Mat getDistCoeffs() const {
-    return (cv::Mat_<double>(1, 5) << k1, k2, p1, p2, 0);
+    if (distortion_model == DistortionModel::Rational) {
+      // rational model: k1, k2, p1, p2, k3, k4, k5, k6
+      return (cv::Mat_<double>(1, 8) << k1, k2, p1, p2, k3, k4, k5, k6);
+    } else {
+      // plumb_bob (RadTan) model: k1, k2, p1, p2, k3
+      return (cv::Mat_<double>(1, 5) << k1, k2, p1, p2, k3);
+    }
+  }
+  
+  /**
+   * @brief Get distortion model name as string
+   */
+  std::string getDistortionModelName() const {
+    return (distortion_model == DistortionModel::Rational) ? "rational" : "plumb_bob";
   }
 };
 

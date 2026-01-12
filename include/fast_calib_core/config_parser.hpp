@@ -201,6 +201,14 @@ class ConfigParser {
       if (current_section == "camera") {
         if (key == "intrinsics" || key == "distortion_coefficients") {
           current_subsection = key;
+        } else if (key == "distortion_model") {
+          // Parse distortion model
+          std::string model_str = removeQuotes(value);
+          if (model_str == "rational") {
+            config.camera.distortion_model = DistortionModel::Rational;
+          } else {
+            config.camera.distortion_model = DistortionModel::PlumbBob;
+          }
         } else if (current_subsection == "intrinsics") {
           if (key == "fx")
             config.camera.fx = std::stod(value);
@@ -219,6 +227,14 @@ class ConfigParser {
             config.camera.p1 = std::stod(value);
           else if (key == "p2")
             config.camera.p2 = std::stod(value);
+          else if (key == "k3")
+            config.camera.k3 = std::stod(value);
+          else if (key == "k4")
+            config.camera.k4 = std::stod(value);
+          else if (key == "k5")
+            config.camera.k5 = std::stod(value);
+          else if (key == "k6")
+            config.camera.k6 = std::stod(value);
         }
         continue;
       }
@@ -287,8 +303,16 @@ class ConfigParser {
               << std::endl;
     std::cout << "  cx=" << config.camera.cx << ", cy=" << config.camera.cy
               << std::endl;
-    std::cout << "  k1=" << config.camera.k1 << ", k2=" << config.camera.k2
+    std::cout << "  distortion_model: " << config.camera.getDistortionModelName()
               << std::endl;
+    std::cout << "  k1=" << config.camera.k1 << ", k2=" << config.camera.k2
+              << ", k3=" << config.camera.k3 << std::endl;
+    std::cout << "  p1=" << config.camera.p1 << ", p2=" << config.camera.p2
+              << std::endl;
+    if (config.camera.distortion_model == DistortionModel::Rational) {
+      std::cout << "  k4=" << config.camera.k4 << ", k5=" << config.camera.k5
+                << ", k6=" << config.camera.k6 << std::endl;
+    }
 
     std::cout << "LiDAR type: "
               << (config.lidar_type == LiDARType::Solid ? "solid-state"

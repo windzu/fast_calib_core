@@ -665,10 +665,17 @@ class ResultSaver {
     outFile << "cam_fy: " << params.camera.fy << "\n";
     outFile << "cam_cx: " << params.camera.cx << "\n";
     outFile << "cam_cy: " << params.camera.cy << "\n";
+    outFile << "distortion_model: " << params.camera.getDistortionModelName() << "\n";
     outFile << "cam_d0: " << params.camera.k1 << "\n";
     outFile << "cam_d1: " << params.camera.k2 << "\n";
     outFile << "cam_d2: " << params.camera.p1 << "\n";
     outFile << "cam_d3: " << params.camera.p2 << "\n";
+    outFile << "cam_d4: " << params.camera.k3 << "\n";
+    if (params.camera.distortion_model == DistortionModel::Rational) {
+      outFile << "k4: " << params.camera.k4 << "\n";
+      outFile << "k5: " << params.camera.k5 << "\n";
+      outFile << "k6: " << params.camera.k6 << "\n";
+    }
 
     const auto& T = result.transformation;
     outFile << "\nRcl: [" << std::fixed << std::setprecision(9);

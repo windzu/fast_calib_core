@@ -54,6 +54,20 @@ bool loadCameraIntrinsics(const std::string& filename, CameraIntrinsics& cam) {
         cam.p1 = std::stod(value);
       else if (key == "p2" || key == "cam_d3")
         cam.p2 = std::stod(value);
+      else if (key == "k3" || key == "cam_d4")
+        cam.k3 = std::stod(value);
+      else if (key == "k4")
+        cam.k4 = std::stod(value);
+      else if (key == "k5")
+        cam.k5 = std::stod(value);
+      else if (key == "k6")
+        cam.k6 = std::stod(value);
+      else if (key == "distortion_model") {
+        if (value == "rational")
+          cam.distortion_model = DistortionModel::Rational;
+        else
+          cam.distortion_model = DistortionModel::PlumbBob;
+      }
     } catch (const std::exception& e) {
       // Skip invalid values
     }

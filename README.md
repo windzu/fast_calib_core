@@ -194,10 +194,12 @@ cam_fx: 522.124
 cam_fy: 522.275
 cam_cx: 773.466
 cam_cy: 534.053
+distortion_model: plumb_bob
 cam_d0: 0.0032495    # k1 (radial distortion)
 cam_d1: -0.0171041   # k2 (radial distortion)
 cam_d2: 0.000669657  # p1 (tangential distortion)
 cam_d3: -0.000350205 # p2 (tangential distortion)
+cam_d4: 0.0          # k3 (radial distortion)
 
 Rcl: [ 0.046103273,  0.997654080, -0.050601516,
       -0.009400862, -0.050219826, -0.998693764,
@@ -226,6 +228,9 @@ The camera intrinsics YAML file should contain:
 image_width: 1440
 image_height: 1080
 
+# Distortion model: "plumb_bob" (default, 5 coefficients) or "rational" (8 coefficients)
+distortion_model: plumb_bob
+
 # Focal length and principal point
 fx: 522.124   # or cam_fx
 fy: 522.275   # or cam_fy
@@ -233,11 +238,19 @@ cx: 773.466   # or cam_cx
 cy: 534.053   # or cam_cy
 
 # Distortion coefficients (OpenCV model)
-k1: 0.0032495    # or cam_d0
-k2: -0.0171041   # or cam_d1
-p1: 0.000669657  # or cam_d2
-p2: -0.000350205 # or cam_d3
+k1: 0.0032495    # or cam_d0 - 1st radial distortion
+k2: -0.0171041   # or cam_d1 - 2nd radial distortion
+p1: 0.000669657  # or cam_d2 - 1st tangential distortion
+p2: -0.000350205 # or cam_d3 - 2nd tangential distortion
+k3: 0.0          # or cam_d4 - 3rd radial distortion
+
+# Additional coefficients for rational model only:
+# k4: 0.0
+# k5: 0.0
+# k6: 0.0
 ```
+
+> **Important**: If your camera uses the **rational polynomial** distortion model (common for wide-angle lenses), you **must** set `distortion_model: rational` and provide k4, k5, k6. Using the wrong model will cause incorrect ArUco pose estimation and circle center detection.
 
 ### Distortion Parameter Mapping
 
@@ -247,6 +260,10 @@ p2: -0.000350205 # or cam_d3
 | cam_d1 | k2 | 2nd radial distortion |
 | cam_d2 | p1 | 1st tangential distortion |
 | cam_d3 | p2 | 2nd tangential distortion |
+| cam_d4 | k3 | 3rd radial distortion |
+| - | k4 | 4th radial distortion (rational model only) |
+| - | k5 | 5th radial distortion (rational model only) |
+| - | k6 | 6th radial distortion (rational model only) |
 
 ---
 
@@ -263,11 +280,14 @@ Create a `config.yaml` file:
 camera:
   image_width: 1440
   image_height: 1080
+  # Distortion model: "plumb_bob" (default) or "rational"
+  distortion_model: plumb_bob
   distortion_coefficients:
     k1: 0.00324949759262203
     k2: -0.0171040538369167
     p1: 0.000669657443377146
     p2: -0.000350205468789575
+    k3: 0.0
   intrinsics:
     fx: 522.123514287681
     fy: 522.275153384482
@@ -340,7 +360,8 @@ The tool automatically detects multi-scene configuration and performs joint opti
 | Section | Field | Description |
 |---------|-------|-------------|
 | `camera` | `intrinsics` | fx, fy, cx, cy focal length and principal point |
-| `camera` | `distortion_coefficients` | k1, k2, p1, p2 distortion |
+| `camera` | `distortion_model` | `"plumb_bob"` (default) or `"rational"` |
+| `camera` | `distortion_coefficients` | k1, k2, p1, p2, k3 (plumb_bob); +k4, k5, k6 (rational) |
 | `lidar` | `type` | "solid" (Livox) or "mech" (Velodyne/Ouster) |
 | `target` | `marker_size` | ArUco marker side length (meters) |
 | `target` | `delta_width_qr_center` | Horizontal distance between QR centers |

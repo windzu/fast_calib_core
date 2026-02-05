@@ -194,10 +194,12 @@ cam_fx: 522.124
 cam_fy: 522.275
 cam_cx: 773.466
 cam_cy: 534.053
+distortion_model: plumb_bob
 cam_d0: 0.0032495    # k1（径向畸变）
 cam_d1: -0.0171041   # k2（径向畸变）
 cam_d2: 0.000669657  # p1（切向畸变）
 cam_d3: -0.000350205 # p2（切向畸变）
+cam_d4: 0.0          # k3（径向畸变）
 
 Rcl: [ 0.046103273,  0.997654080, -0.050601516,
       -0.009400862, -0.050219826, -0.998693764,
@@ -226,6 +228,9 @@ RMSE: 0.002004615 m
 image_width: 1440
 image_height: 1080
 
+# 畸变模型："plumb_bob"（默认，5 个系数）或 "rational"（8 个系数）
+distortion_model: plumb_bob
+
 # 焦距和主点
 fx: 522.124   # 或 cam_fx
 fy: 522.275   # 或 cam_fy
@@ -233,11 +238,19 @@ cx: 773.466   # 或 cam_cx
 cy: 534.053   # 或 cam_cy
 
 # 畸变系数（OpenCV 模型）
-k1: 0.0032495    # 或 cam_d0
-k2: -0.0171041   # 或 cam_d1
-p1: 0.000669657  # 或 cam_d2
-p2: -0.000350205 # 或 cam_d3
+k1: 0.0032495    # 或 cam_d0 - 第一径向畸变
+k2: -0.0171041   # 或 cam_d1 - 第二径向畸变
+p1: 0.000669657  # 或 cam_d2 - 第一切向畸变
+p2: -0.000350205 # 或 cam_d3 - 第二切向畸变
+k3: 0.0          # 或 cam_d4 - 第三径向畸变
+
+# 仅 rational 模型需要的额外系数：
+# k4: 0.0
+# k5: 0.0
+# k6: 0.0
 ```
+
+> **重要提示**：如果您的相机使用 **rational polynomial（有理多项式）** 畸变模型（广角镜头常见），**必须**设置 `distortion_model: rational` 并提供 k4, k5, k6。使用错误的模型会导致 ArUco 位姿估计和圆心检测出错。
 
 ### 畸变参数映射
 
@@ -247,6 +260,10 @@ p2: -0.000350205 # 或 cam_d3
 | cam_d1 | k2 | 第二径向畸变系数 |
 | cam_d2 | p1 | 第一切向畸变系数 |
 | cam_d3 | p2 | 第二切向畸变系数 |
+| cam_d4 | k3 | 第三径向畸变系数 |
+| - | k4 | 第四径向畸变系数（仅 rational 模型） |
+| - | k5 | 第五径向畸变系数（仅 rational 模型） |
+| - | k6 | 第六径向畸变系数（仅 rational 模型） |
 
 ---
 
@@ -263,11 +280,14 @@ p2: -0.000350205 # 或 cam_d3
 camera:
   image_width: 1440
   image_height: 1080
+  # 畸变模型："plumb_bob"（默认）或 "rational"
+  distortion_model: plumb_bob
   distortion_coefficients:
     k1: 0.00324949759262203
     k2: -0.0171040538369167
     p1: 0.000669657443377146
     p2: -0.000350205468789575
+    k3: 0.0
   intrinsics:
     fx: 522.123514287681
     fy: 522.275153384482
@@ -340,7 +360,8 @@ scenes:
 | 节 | 字段 | 描述 |
 |---|------|------|
 | `camera` | `intrinsics` | fx, fy, cx, cy 焦距和主点 |
-| `camera` | `distortion_coefficients` | k1, k2, p1, p2 畸变系数 |
+| `camera` | `distortion_model` | `"plumb_bob"`（默认）或 `"rational"` |
+| `camera` | `distortion_coefficients` | k1, k2, p1, p2, k3（plumb_bob）；+k4, k5, k6（rational） |
 | `lidar` | `type` | "solid"（Livox）或 "mech"（Velodyne/Ouster） |
 | `target` | `marker_size` | ArUco 标记边长（米） |
 | `target` | `delta_width_qr_center` | QR 中心之间的水平距离 |
@@ -349,6 +370,39 @@ scenes:
 | `scenes[].filter.min` | [x,y,z] | ROI 最小边界 |
 | `scenes[].filter.max` | [x,y,z] | ROI 最大边界 |
 | `output` | `path` | 输出目录（相对或绝对路径） |
+
+### 畸变模型配置
+
+本库支持两种畸变模型：
+
+**plumb_bob (RadTan)** - 5 个系数：
+
+```yaml
+camera:
+  distortion_model: plumb_bob
+  distortion_coefficients:
+    k1: -0.414747
+    k2: 0.220516
+    p1: -7.31650e-05
+    p2: -8.94179e-06
+    k3: -0.065621
+```
+
+**rational** - 8 个系数：
+
+```yaml
+camera:
+  distortion_model: rational
+  distortion_coefficients:
+    k1: 0.211536
+    k2: -0.308318
+    p1: -7.27019e-05
+    p2: -8.8394e-06
+    k3: -0.024458
+    k4: 0.637844
+    k5: -0.330330
+    k6: -0.120480
+```
 
 ---
 

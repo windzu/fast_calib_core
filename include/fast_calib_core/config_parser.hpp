@@ -160,6 +160,8 @@ class ConfigParser {
       if (colon_pos == std::string::npos) continue;
 
       std::string key = trim(trimmed.substr(0, colon_pos));
+      // Normalize key to lowercase for case-insensitive matching
+      std::transform(key.begin(), key.end(), key.begin(), ::tolower);
       std::string value = trim(trimmed.substr(colon_pos + 1));
 
       // Handle sections based on indentation
